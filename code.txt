@@ -1,0 +1,328 @@
+#include "io430.h"
+unsigned int distance_r = 0,distance_m = 0,distance_l=0,cycle_r=0,cycle_l=0,i=0,m,firsTurn=0;
+float distance_w_r = 0,distance_w_l = 0;
+int counter_r=0,counter_l=0,cnt=0,dm=0,dr=0,dl=0;
+long time1,time2,time3;
+char c_m,c_r,c_l;
+
+void forward()                          // make adjustments to move forward
+{
+  P1OUT &= ~(BIT7 + BIT3);
+  P1OUT |= BIT0;
+  P1SEL |= BIT6;
+}
+void back()                             // make adjustments to move back          
+{
+  P1SEL &= ~BIT6;
+  P1OUT &= ~BIT0;
+  P1OUT |= BIT3 + BIT7;
+}
+void turn_right()                     // make adjustments to move turn right
+{
+  P1OUT &= ~(BIT0 + BIT3);
+  P1OUT |= BIT7;  
+  P1SEL |= BIT6;
+}
+void turn_left()                     // make adjustments to move turn left         
+{
+  P1SEL &= ~BIT6;
+  P1OUT &= ~BIT7;
+  P1OUT |= BIT0 + BIT3;  
+
+}
+void stop()                          // make adjustments to stop
+{
+  P1OUT &= ~(BIT0 + BIT3 + BIT7);
+  P1SEL &= ~BIT6;
+}
+void init_pwm()                   // pwm adjustment for slow rotating motor
+{
+   TA0CCR0 = 1000;
+   TA0CCR1 = 950;                // %95 duty cycle
+   TA0CCTL1 = OUTMOD_7;
+   TA0CTL = TASSEL_2 + MC_1;     // time setting
+}
+void init_IR_r()             // make adjustments for right infrared sensor
+{
+  P1DIR &= ~BIT5;
+  P1IE |= BIT5;              // interrupt enabled
+  P1IES &= ~BIT5;            // rising edge on the pin
+}
+void init_IR_l()           // make adjustments for left infrared sensor
+{
+  P1DIR &= ~BIT4;
+  P1IE |= BIT4;             // interrupt enabled
+  P1IES &= ~BIT4;            // rising edge on the pin
+}
+void sensor_m()       // ultrasonic sensor adjustment for the middle sensor        
+{
+  P2IE = 0x00;
+  P2SEL &= ~BIT6 + ~BIT7;      // select the pins as I/O
+  P2DIR |= BIT6;                        // make pins trigger
+  
+  P2OUT |= BIT6;
+  __delay_cycles(10);      // produce sound wave per 10ms
+  P2OUT &= ~BIT6;
+  
+  P2DIR &= ~BIT7;	           // make pins echo
+  P2IFG = 0x00;
+  P2IE |= BIT7;			        // enable interupt on ECHO pins
+  P2IES &= ~BIT7;	// rising edge on ECHO pins
+  __delay_cycles(30000);   // delay for 30ms (after this time echo times out if there is no object detected)
+}
+
+void sensor_r()    // ultrasonic sensor adjustment for the right sensor
+{
+  P2IE = 0x00;
+  P2DIR |= BIT0;                        // make pins trigger
+  
+  P2OUT |= BIT0;
+  __delay_cycles(10);          // produce sound wave per 10ms
+  P2OUT &= ~BIT0;
+  
+  P2DIR &= ~BIT1;	                  // make pins echo
+  P2IFG = 0x00;
+  P2IE |= BIT1;			     // enable interupt on ECHO pins
+  P2IES &= ~BIT1;	 // rising edge on ECHO pins
+  __delay_cycles(30000);       // delay for 30ms (after this time echo times out if there is no object detected)
+}
+
+void sensor_l()    // ultrasonic sensor adjustment for the left sensor
+{
+  P2IE = 0x00;
+  P2DIR |= BIT4;                        // make pins trigger
+  
+  P2OUT |= BIT4;
+  __delay_cycles(10);    // produce sound wave per 10ms
+  P2OUT &= ~BIT4;
+  
+  P2DIR &= ~BIT5;	                                // make pins echo
+  P2IFG = 0x00;
+  P2IE |= BIT5;			                       // enable interupt on ECHO pins
+  P2IES &= ~BIT5;			// rising edge on ECHO pins
+  __delay_cycles(30000);          // delay for 30ms (after this time echo times out if there is no object detected)
+}
+void longest_way()            // find which sensor detect longer distance
+{
+      if(distance_l >= distance_m && distance_l >= distance_r)
+    {m=0;}
+    else if(distance_r>=distance_m && distance_r>=distance_l)
+    {m=1;}
+    else if(distance_m>=distance_l && distance_m>=distance_r)
+    { m=2;}
+}
+void turn()
+{
+   if(m==0)
+    {
+      turn_left();
+      __delay_cycles(175000);
+      stop();
+      
+      if(firsTurn == 1)         // send data to bluetooth on the second turn
+      {
+        UCA0TXBUF = 'a';
+        __delay_cycles(5000);
+        UCA0TXBUF = cycle_r;
+        cycle_r = 0;
+      }
+      firsTurn = 1;
+      cycle_r = 0;
+    }
+    if(m==1)
+    {
+      turn_right();
+      __delay_cycles(175000);
+      stop();
+    }
+}
+void go()
+{
+      while(1){
+      sensor_m();sensor_r();sensor_l();
+      forward();
+      __delay_cycles(10000);
+      if(distance_m < 35 || distance_l < 6 || distance_r < 6){
+        stop();
+        __delay_cycles(100000);          // !!
+        back();
+        __delay_cycles(500000);
+        stop();
+        longest_way();
+        if(m==2)
+        {
+          if(distance_r >= distance_l)
+          {
+            turn_right();
+            __delay_cycles(175000);
+            stop();
+            
+          }
+          else{
+            turn_left();
+            __delay_cycles(175000);
+            stop();
+          }
+        }
+        __delay_cycles(100000);
+        break;
+      }
+    }
+}
+void main( void )
+{
+  // Stop watchdog timer to prevent time out reset
+  WDTCTL = WDTPW + WDTHOLD;
+  BCSCTL1 = CALBC1_1MHZ;               
+  DCOCTL  = CALDCO_1MHZ;
+  __delay_cycles(1000000);
+  
+ 
+ TA1CTL = MC_1 + TASSEL_2;  // select clock for distance sensors
+ TA1CCR0 = 50000;
+
+ P1OUT = 0x00;
+ P1DIR |= BIT7 + BIT0 + BIT3 + BIT6;
+ P1SEL |= BIT1 + BIT2;
+ P1SEL2 |= BIT1 + BIT2;
+  
+ UCA0CTL1 = UCSSEL_2;   // clock source
+ UCA0BR0 = 104;        // 1mhz/9600
+ UCA0BR1 = 0;
+ UCA0MCTL = UCBRS1;  // mode control == 1 (kalan sikinti yapmasin diye)
+ UCA0CTL1 &= ~UCSWRST; //rastgale sifirlanmasin diye
+ IE2 |= UCA0RXIE;
+  
+  
+ P2IFG  = 0x00;			    //clear all interrupt flags
+ P1IFG  = 0x00;			    //clear all interrupt flags
+  
+
+  __bis_SR_register(GIE);
+//  __bis_SR_register(LPM1_bits + GIE);
+
+while(1)
+  {
+    sensor_m();
+    sensor_r();
+    sensor_l();
+
+    init_IR_r();
+    init_IR_l();
+    
+    init_pwm();
+
+    __delay_cycles(500000);
+    longest_way();
+    turn();
+    __delay_cycles(500000);
+    go();
+
+ }
+}
+
+#pragma vector = PORT2_VECTOR
+__interrupt void Port_2(void)
+{
+  if(P2IFG & BIT7)
+  {
+    if(!(P2IES & BIT7))                // rising edge?
+    {
+      TA1CTL|=TACLR;   // clears timer A
+      P2IES |= BIT7;  //falling edge
+    }
+    else
+    {
+      time1 =(long)TA1R;                      //calculating ECHO lenght
+      distance_m = time1/58;
+      UCA0TXBUF = 'm';
+      __delay_cycles(50000);
+      UCA0TXBUF = distance_m;
+      P2IE &= ~BIT7;
+    }
+    P2IFG &= ~BIT7;				//clear flag
+  }
+//--------------------------------------------  
+  if(P2IFG & BIT1)
+  {
+    if(!(P2IES & BIT1))                // rising edge?
+    {
+      TA1CTL|=TACLR;   // clears timer A
+      P2IES |= BIT1;  //falling edge
+    }
+    else
+    {
+      time2 =(long)TA1R;                      //calculating ECHO lenght
+      distance_r = time2/58;
+      UCA0TXBUF = 'r';
+      __delay_cycles(50000);
+      UCA0TXBUF = distance_r;
+      P2IE &= ~BIT1;
+    }
+    P2IFG &= ~BIT1;				//clear flag
+  }
+//-------------------------------------------  
+  if(P2IFG & BIT5)
+  {
+    if(!(P2IES & BIT5))                // rising edge?
+    {
+      TA1CTL|=TACLR;   // clears timer A
+      P2IES |= BIT5;  //falling edge
+    }
+    else
+    {
+      time3 = TA1R;                      //calculating ECHO lenght
+      distance_l = time3/58;
+      UCA0TXBUF = 'l';
+      __delay_cycles(50000);
+      UCA0TXBUF = distance_l;
+      P2IE &= ~BIT5;
+    }
+    P2IFG &= ~BIT5;				//clear flag
+  }
+}
+
+#pragma vector = PORT1_VECTOR
+__interrupt void Port_1(void)
+{
+ 
+  if(P1IFG & BIT4)
+  {
+    if(!(P1IES & BIT4))
+    {
+      P1IES |= BIT4;  //falling edge
+    }
+    else
+    {
+    counter_r++;
+    distance_w_r = distance_w_r + 0.2;  // calculatin distance on the wheel
+      if(counter_r == 20)
+      {
+        counter_r = 0;
+        cycle_r++;
+        //UCA0TXBUF = cycle_r;
+      }
+    }
+    P1IFG &= ~BIT4;				//clear flag
+  }
+  //------------------------------
+  if(P1IFG & BIT5)
+  {
+    if(!(P1IES & BIT5))
+    {
+      P1IES |= BIT5;  //falling edge
+    }
+    else
+    {
+    counter_l++;
+    distance_w_l = distance_w_l + 0.2;  // calculatin distance on the wheel
+      if(counter_l == 20)
+      {
+        counter_l = 0;
+        cycle_l++;  
+        //UCA0TXBUF = cycle_l;
+      }
+    }
+    P1IFG &= ~BIT5;				//clear flag
+  }
+}
